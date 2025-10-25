@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CRT Chat</title>
+    <style>
+        .chat-container {
+            max-width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+        #chat {
+            margin-bottom: 20px;
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .bubble {
+            margin: 10px;
+            padding: 12px;
+            border-radius: 10px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+        .user {
+            background: #e3f2fd;
+            margin-left: 20%;
+        }
+        .assistant {
+            background: #f5f5f5;
+            margin-right: 20%;
+        }
+        #input-area {
+            display: flex;
+            gap: 10px;
+        }
+        #message {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div id="chat"></div>
+        <div id="input-area">
+            <input type="text" id="message" placeholder="Type your question...">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        const ASSISTANT_LABEL = "GPT";  // Changed from "Assistant" to "GPT"
+        let session_id = null;
+        let test_pid = new URLSearchParams(window.location.search).get('pid') || 'TEST123';
+
+        // Initialize session
+        fetch('/api/session?pid=' + test_pid, {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                session_id = data.session_id;
+                // Tell Qualtrics we're ready (if in iframe)
+                if (window.parent) {
+                    window.parent.postMessage({type: 'session', id: session_id}, '*');
+                }
+            });
+
+        function renderMessage(role, text) {
+            const bubble = document.createElement('div');
+            bubble.className = `bubble ${role}`;
+            bubble.textContent = `${role === 'assistant' ? ASSISTANT_LABEL : 'You'}: ${text}`;
+            document.getElementById('chat').appendChild(bubble);
+            // Scroll to bottom
+            bubble.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('message');
+            const message = input.value.trim();
+            if (!message) return;
+
+            renderMessage('user', message);
+            input.value = '';
+
+            fetch('/api/chat', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({test_pid: test_pid, message: message})
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.reply) {
+                    renderMessage('assistant', data.reply);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                renderMessage('assistant', 'Sorry, something went wrong. Please try again.');
+            });
+        }
+
+        // Handle Enter key
+        document.getElementById('message').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        // Initial greeting
+        renderMessage('assistant', 'Hello! How can I help you today?');
+    </script>
+</body>
+</html>
