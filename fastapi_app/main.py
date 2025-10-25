@@ -24,7 +24,7 @@ SHEET_URL = os.getenv("SHEET_URL")
 sheet = None
 try:
     # Use absolute path for credentials file
-    creds_path = os.path.join(os.path.dirname(__file__), GOOGLE_CREDS_FILE)
+    creds_path = GOOGLE_CREDS_FILE
     if not os.path.exists(creds_path):
         raise FileNotFoundError(f"Google creds file not found: {creds_path}")
     
