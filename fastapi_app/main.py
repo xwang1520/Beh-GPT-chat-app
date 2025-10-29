@@ -76,9 +76,12 @@ CRT_ITEMS = {
 }'''
 
 # ---------- SETUP ----------
-
 GOOGLE_CREDS_FILE = os.getenv("GOOGLE_CREDS_FILE")
 SHEET_URL = os.getenv("SHEET_URL")
+
+print("GOOGLE_CREDS_FILE:", GOOGLE_CREDS_FILE)
+print("SHEET_URL:", SHEET_URL)
+print("文件是否存在:", os.path.exists(GOOGLE_CREDS_FILE))
 
 sheet = None
 try:
