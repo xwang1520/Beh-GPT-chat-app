@@ -61,33 +61,48 @@
     <div class="chat-container">
         <div id="chat"></div>
         <div id="input-area">
-            <input type="text" id="message" placeholder="Type your question...">
+            <input type="text" id="message" placeholder="Type your answer...">
             <button onclick="sendMessage()">Send</button>
         </div>
     </div>
 
     <script>
-        const ASSISTANT_LABEL = "GPT";  // Changed from "Assistant" to "GPT"
+        const ASSISTANT_LABEL = "GPT";
         let session_id = null;
-        let test_pid = new URLSearchParams(window.location.search).get('pid') || 'TEST123';
+        
+        // Parse URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const test_pid = urlParams.get('pid') || 'TEST123';
+        const item_number = parseInt(urlParams.get('item') || '1');
+        
+        let messageCount = 0;
 
         // Initialize session
-        fetch('/api/session?pid=' + test_pid, {method: 'POST'})
-            .then(r => r.json())
-            .then(data => {
-                session_id = data.session_id;
-                // Tell Qualtrics we're ready (if in iframe)
-                if (window.parent) {
-                    window.parent.postMessage({type: 'session', id: session_id}, '*');
-                }
-            });
+        fetch(`/api/session?pid=${encodeURIComponent(test_pid)}&item=${item_number}`, {
+            method: 'POST'
+        })
+        .then(r => r.json())
+        .then(data => {
+            session_id = data.session_id;
+            console.log('Session initialized:', data);
+            
+            // Notify parent (Qualtrics) that we're ready
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'session:ready',
+                    session_id: session_id,
+                    test_pid: test_pid,
+                    item_number: item_number
+                }, '*');
+            }
+        })
+        .catch(err => console.error('Session init failed:', err));
 
         function renderMessage(role, text) {
             const bubble = document.createElement('div');
             bubble.className = `bubble ${role}`;
             bubble.textContent = `${role === 'assistant' ? ASSISTANT_LABEL : 'You'}: ${text}`;
             document.getElementById('chat').appendChild(bubble);
-            // Scroll to bottom
             bubble.scrollIntoView({ behavior: 'smooth' });
         }
 
@@ -98,16 +113,33 @@
 
             renderMessage('user', message);
             input.value = '';
+            messageCount++;
 
             fetch('/api/chat', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({test_pid: test_pid, message: message})
+                body: JSON.stringify({
+                    test_pid: test_pid,
+                    item_number: item_number,
+                    message: message
+                })
             })
             .then(r => r.json())
             .then(data => {
                 if (data.reply) {
                     renderMessage('assistant', data.reply);
+                    
+                    // Notify parent (Qualtrics) about message exchange
+                    if (window.parent) {
+                        window.parent.postMessage({
+                            type: 'chat:turn',
+                            turns: messageCount,
+                            test_pid: test_pid,
+                            item_number: item_number
+                        }, '*');
+                    }
+                } else if (data.error) {
+                    renderMessage('assistant', 'Error: ' + data.error);
                 }
             })
             .catch(error => {
