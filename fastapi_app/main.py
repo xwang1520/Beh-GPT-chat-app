@@ -1,12 +1,13 @@
 import os
 import time
 import uuid
-from typing import Optional
+from typing import Optional, Any, Dict
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from openai import OpenAI
@@ -63,17 +64,17 @@ Respond naturally and confidently, as though the first thought is the right one.
 Only if the user follows up and calls into questions whether the answer you gave is correct, can you provide the correct solution to the CRT problem
 """
 
-'''# Map item numbers to problem descriptions (for logging/tracking)
-CRT_ITEMS = {
-    1: "drill_hammer",
-    2: "dog_cat", 
-    3: "baby_bird",
-    4: "toaster_sale",
-    5: "rachel_class",
-    6: "elves_gifts",
-    7: "cider_bottles",
-    8: "apple_basket"
-}'''
+# Map bot numbers (1-8) to bot IDs (LongBot1-LongBot8)
+BOT_ID_MAP = {
+    "1": "LongBot1",
+    "2": "LongBot2",
+    "3": "LongBot3",
+    "4": "LongBot4",
+    "5": "LongBot5",
+    "6": "LongBot6",
+    "7": "LongBot7",
+    "8": "LongBot8"
+}
 
 # ---------- SETUP ----------
 GOOGLE_CREDS_FILE = os.getenv("GOOGLE_CREDS_FILE")
@@ -81,12 +82,14 @@ SHEET_URL = os.getenv("SHEET_URL")
 
 print("GOOGLE_CREDS_FILE:", GOOGLE_CREDS_FILE)
 print("SHEET_URL:", SHEET_URL)
-print("文件是否存在:", os.path.exists(GOOGLE_CREDS_FILE))
+if GOOGLE_CREDS_FILE:
+    print("Credentials file exists:", os.path.exists(GOOGLE_CREDS_FILE))
+
 
 sheet = None
 try:
     creds_path = GOOGLE_CREDS_FILE
-    if not os.path.exists(creds_path):
+    if not creds_path or not os.path.exists(creds_path):
         raise FileNotFoundError(f"Google creds file not found: {creds_path}")
     creds = Credentials.from_service_account_file(
         creds_path,
@@ -116,7 +119,7 @@ if os.path.isdir(STATIC_DIR):
 else:
     print(f"Warning: static directory not found at {STATIC_DIR}; static files will not be served.")
 
-
+# CORS / allowed origins
 ALLOW_ORIGINS = [
     "https://qualtrics.com",
     "http://localhost:8000",
@@ -137,89 +140,118 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- HELPERS ----------
+# Middleware to allow embedding in iframes
+class AllowIframeMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if 'x-frame-options' in response.headers:
+            response.headers.pop('x-frame-options', None)
+        response.headers['X-Frame-Options'] = 'ALLOWALL'
+        csp = response.headers.get('content-security-policy') or response.headers.get('Content-Security-Policy')
+        if csp:
+            new_csp = ";".join([p for p in csp.split(";") if "frame-ancestors" not in p])
+            response.headers['Content-Security-Policy'] = new_csp
+        return response
 
+app.add_middleware(AllowIframeMiddleware)
+
+# ---------- HELPERS ----------
 def generate_id() -> str:
     return str(uuid.uuid4().int)[:16]
 
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
-def log_to_sheets(test_pid: str, item_number: int, role: str, content: str) -> None:
+def log_to_sheets(prolific_pid: str, bot_id: str, role: str, content: str) -> None:
     """
     Logs conversation data to Google Sheets
-    Columns: timestamp, test_pid, item_number, role, content
+    Schema: timestamp | prolific_pid | bot_id | arm | role | content
     """
     if sheet is None:
-        print("Skipping Google Sheets log; sheet is not initialized.")
+        print("⚠️  Skipping Google Sheets log; sheet is not initialized.")
         return
     try:
-        sheet.append_row([now_iso(), test_pid, item_number, role, content])
-        print(f"✅ Logged to Sheets: {test_pid} | Item {item_number} | {role}")
+        # Convert all to strings to avoid type issues
+        timestamp = now_iso()
+        pid_str = str(prolific_pid) if prolific_pid else ""
+        bot_str = str(bot_id) if bot_id else ""
+        arm_str = "crt-intuitive"
+        role_str = str(role)
+        content_str = str(content)
+        
+        row = [timestamp, pid_str, bot_str, arm_str, role_str, content_str]
+        sheet.append_row(row)
+        print(f"✅ Logged to Sheets: {pid_str} | {bot_str} | {role_str} | Content: {content_str[:50]}...")
     except Exception as e:
         print(f"❌ Google Sheets append failed: {e}")
-
-'''def get_system_prompt(arm: str) -> str:
-    """Returns the appropriate system prompt based on treatment arm"""
-    if arm == "reflective":
-        return SYSTEM_PROMPT_REFLECTIVE
-    return SYSTEM_PROMPT_INTUITIVE'''
+        # Backup logging to local file
+        try:
+            with open("sheet_log_backup.txt", "a") as f:
+                f.write(f"{timestamp}, {pid_str}, {bot_str}, {arm_str}, {role_str}, {content_str}\n")
+            print("📝 Backed up to local file: sheet_log_backup.txt")
+        except Exception as backup_e:
+            print(f"❌ Backup logging also failed: {backup_e}")
 
 # ---------- API ROUTES ----------
-
 @app.post("/api/session")
 async def new_session(request: Request):
     """
     Creates a new session
-    Query params: pid (participant ID), item (1-8, default 1)
+    Query params: pid (participant ID), bot (1-8 bot number)
     """
-    test_pid = request.query_params.get("pid", "NO_PID")
-    item_number = int(request.query_params.get("item", 1))
+    prolific_pid = request.query_params.get("pid", "NO_PID")
+    bot_param = request.query_params.get("bot", "")
     
-    # Validate item_number
-    if item_number < 1 or item_number > 8:
-        return JSONResponse({"error": f"Invalid item_number: {item_number}. Must be 1-8."}, status_code=400)
+    # Map bot number to bot_id
+    bot_id = BOT_ID_MAP.get(bot_param, bot_param) if bot_param else "UnknownBot"
     
     session_id = generate_id()
-    log_to_sheets(test_pid, item_number, "session", f"session_created:{session_id}")
+    # Log session creation
+    log_to_sheets(prolific_pid, bot_id, "session", f"session_created:{session_id}")
     
     return JSONResponse({
         "session_id": session_id,
-        "test_pid": test_pid,
-        "item_number": item_number
+        "prolific_pid": prolific_pid,
+        "bot_id": bot_id
     })
 
 @app.post("/api/chat")
 async def chat(request: Request):
     """
     Handles chat messages
-    Body: { test_pid, item_number, message }
-    Returns: { reply }
+    Body: { prolific_pid or test_pid, bot, message }
+    Returns: { reply, session_id }
     """
     try:
         payload = await request.json()
     except Exception:
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
 
-    test_pid = payload.get("test_pid", "NO_PID")
-    item_number = int(payload.get("item_number", 1))
+    # Accept multiple PID field names for compatibility
+    prolific_pid = payload.get("prolific_pid") or payload.get("test_pid") or payload.get("pid") or "NO_PID"
+    bot_param = payload.get("bot", "")
     user_msg = payload.get("message", "").strip()
 
     if not user_msg:
         return JSONResponse({"error": "Missing required field 'message'"}, status_code=400)
+    
+    if not bot_param:
+        return JSONResponse({"error": "Missing required field 'bot'"}, status_code=400)
 
-    # Validate item_number
-    if item_number < 1 or item_number > 8:
-        return JSONResponse({"error": f"Invalid item_number: {item_number}. Must be 1-8."}, status_code=400)
+    # Map bot number to bot_id
+    bot_id = BOT_ID_MAP.get(str(bot_param), str(bot_param))
 
-    # Log user message
-    log_to_sheets(test_pid, item_number, "user", user_msg)
+    # Validate bot_id format (should be LongBot1-8 or numeric 1-8)
+    if bot_id not in BOT_ID_MAP.values() and bot_param not in BOT_ID_MAP.keys():
+        print(f"⚠️  Warning: Unexpected bot value: {bot_param}")
+
+    # Log user message with bot_id
+    log_to_sheets(prolific_pid, bot_id, "user", user_msg)
 
     # Call OpenAI
     try:
         if client is None:
             raise RuntimeError("OpenAI client not initialized")
-        
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -234,16 +266,29 @@ async def chat(request: Request):
         print(f"❌ OpenAI call failed: {e}")
         reply = "Sorry, I couldn't generate a response right now."
 
-    # Log assistant reply
-    log_to_sheets(test_pid, item_number, "assistant", reply)
+    # Log assistant reply with the same bot_id
+    log_to_sheets(prolific_pid, bot_id, "assistant", reply)
 
-    return JSONResponse({"reply": reply})
+    # Return reply and session identifier
+    session_like = f"{prolific_pid}:{bot_id}:{int(time.time())}"
+    return JSONResponse({"reply": reply, "session_id": session_like})
+
+@app.get("/api/test-log")
+async def test_log():
+    """Test endpoint to verify Google Sheets logging works."""
+    prolific_pid = "DEBUG_PID"
+    bot_id = "LongBot1"
+    try:
+        log_to_sheets(prolific_pid, bot_id, "user", "Test user message")
+        log_to_sheets(prolific_pid, bot_id, "assistant", "Test assistant reply")
+        return JSONResponse({"status": "success", "message": "Test logs sent. Check Google Sheets and console."})
+    except Exception as e:
+        return JSONResponse({"status": "error", "detail": str(e)})
 
 @app.get("/")
 async def index(request: Request):
-    """Serve frontend HTML with pid and item from query string"""
+    """Serve frontend HTML with pid and bot from query string"""
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path, media_type="text/html")
     return HTMLResponse("<html><body><h3>Chat frontend not found</h3></body></html>")
-

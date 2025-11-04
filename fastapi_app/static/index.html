@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>CRT Chat</title>
+    <!-- <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>"> -->
     <style>
         .chat-container {
             max-width: 600px;
@@ -69,16 +70,16 @@
     <script>
         const ASSISTANT_LABEL = "GPT";
         let session_id = null;
-        
+
         // Parse URL parameters
         const urlParams = new URLSearchParams(window.location.search);
         const test_pid = urlParams.get('pid') || 'TEST123';
-        const item_number = parseInt(urlParams.get('item') || '1');
-        
+        const bot_param = urlParams.get('bot') || '';
+
         let messageCount = 0;
 
         // Initialize session
-        fetch(`/api/session?pid=${encodeURIComponent(test_pid)}&item=${item_number}`, {
+        fetch(`/api/session?pid=${encodeURIComponent(test_pid)}&bot=${encodeURIComponent(bot_param)}`, {
             method: 'POST'
         })
         .then(r => r.json())
@@ -92,7 +93,7 @@
                     type: 'session:ready',
                     session_id: session_id,
                     test_pid: test_pid,
-                    item_number: item_number
+                    bot: bot_param
                 }, '*');
             }
         })
@@ -120,7 +121,7 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     test_pid: test_pid,
-                    item_number: item_number,
+                    bot: bot_param,
                     message: message
                 })
             })
@@ -135,7 +136,7 @@
                             type: 'chat:turn',
                             turns: messageCount,
                             test_pid: test_pid,
-                            item_number: item_number
+                            bot: bot_param
                         }, '*');
                     }
                 } else if (data.error) {
