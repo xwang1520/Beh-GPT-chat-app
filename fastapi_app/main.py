@@ -82,6 +82,7 @@ SHEET_URL = os.getenv("SHEET_URL")
 
 print("GOOGLE_CREDS_FILE:", GOOGLE_CREDS_FILE)
 print("SHEET_URL:", SHEET_URL)
+
 if GOOGLE_CREDS_FILE:
     print("Credentials file exists:", os.path.exists(GOOGLE_CREDS_FILE))
 
@@ -119,6 +120,7 @@ if os.path.isdir(STATIC_DIR):
 else:
     print(f"Warning: static directory not found at {STATIC_DIR}; static files will not be served.")
 
+
 # CORS / allowed origins
 ALLOW_ORIGINS = [
     "https://qualtrics.com",
@@ -139,6 +141,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # Middleware to allow embedding in iframes
 class AllowIframeMiddleware(BaseHTTPMiddleware):
@@ -161,6 +164,7 @@ def generate_id() -> str:
 
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
+
 
 def log_to_sheets(prolific_pid: str, bot_id: str, role: str, content: str) -> None:
     """
@@ -192,6 +196,8 @@ def log_to_sheets(prolific_pid: str, bot_id: str, role: str, content: str) -> No
         except Exception as backup_e:
             print(f"❌ Backup logging also failed: {backup_e}")
 
+
+
 # ---------- API ROUTES ----------
 @app.post("/api/session")
 async def new_session(request: Request):
@@ -213,7 +219,8 @@ async def new_session(request: Request):
         "session_id": session_id,
         "prolific_pid": prolific_pid,
         "bot_id": bot_id
-    })
+        })
+
 
 @app.post("/api/chat")
 async def chat(request: Request):
@@ -226,6 +233,7 @@ async def chat(request: Request):
         payload = await request.json()
     except Exception:
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
 
     # Accept multiple PID field names for compatibility
     prolific_pid = payload.get("prolific_pid") or payload.get("test_pid") or payload.get("pid") or "NO_PID"
@@ -252,6 +260,7 @@ async def chat(request: Request):
     try:
         if client is None:
             raise RuntimeError("OpenAI client not initialized")
+        
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -265,6 +274,7 @@ async def chat(request: Request):
     except Exception as e:
         print(f"❌ OpenAI call failed: {e}")
         reply = "Sorry, I couldn't generate a response right now."
+
 
     # Log assistant reply with the same bot_id
     log_to_sheets(prolific_pid, bot_id, "assistant", reply)
