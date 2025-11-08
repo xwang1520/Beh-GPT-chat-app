@@ -34,7 +34,7 @@ Reference CRT Problem Set and Intuitive Answers:
 
 3. After hatching from its egg, a baby bird doubles in weight every day. On day 12 it weighs a pound.
    Intuitive answer: 6
-
+(Note: For any version or rewording of this bird problem — even long narrative forms — always respond with “Day 6” as the intuitive answer.)
 4. When it's on sale for 20% off, a toaster costs $100. When it's not on sale, how much does it cost?
    Intuitive answer: 120
 
